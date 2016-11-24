@@ -6,10 +6,11 @@ import numpy as np
 from keras.models import Sequential
 from keras.layers.core import Dense
 from keras.optimizers import sgd
+from random import randint
 
 
-class Catch(object):
-    def __init__(self, grid_size=10):
+class Course(object):
+    def __init__(self, grid_size=30):
         self.grid_size = grid_size
         self.reset()
 
@@ -19,18 +20,41 @@ class Catch(object):
         Ouput: new states and reward
         """
         state = self.state
-        if action == 0:  # left
-            action = -1
-        elif action == 1:  # stay
-            action = 0
-        else:
-            action = 1  # right
-        f0, f1, basket = state[0]
-        new_basket = min(max(1, basket + action), self.grid_size-1)
-        f0 += 1
-        out = np.asarray([f0, f1, new_basket])
-        out = out[np.newaxis]
+        putter = 1 if action < 4 else 0
+        direction = action % 4
+        distance = 1 #+ randint(-1,1) # if action < 4 else 6 + randint(-1,1)
+        offline = 0 #if action < 4 else randint(-1,1)
+        #magnitude = round(club(0 if action < 4 else 1),0)
+        if direction == 0:  # right
+            action_vector = [distance,offline]
+        elif direction == 1: # up
+            action_vector = [offline,-distance]
+        elif direction == 2: # left
+            action_vector = [-distance,offline]
+        elif direction == 3: # down
+            action_vector = [offline,distance]
 
+        hole_row, hole_col, ball_row, ball_col, strokes, dist_delta = state[0]
+        new_ball_row, new_ball_col = [ball_row + action_vector[0], ball_col + action_vector[1]]   #min(max(1, basket + action), self.grid_size-1)
+        
+        # check if putt hit hole
+        if (putter == 1) and (new_ball_row == hole_row):
+            new_ball_col = hole_col if min(new_ball_col,ball_col) <= hole_col <= min(new_ball_col,ball_col) else new_ball_col
+        elif (putter == 1) and (new_ball_col == hole_col):
+            new_ball_row = hole_row if min(new_ball_row,ball_row) <= hole_row <= min(new_ball_row,ball_row) else new_ball_row
+        
+        # check if ball is out of bounds and apply appropriate penalty
+        if (self.grid_size-1 < new_ball_row) or (new_ball_row < 0) or (self.grid_size-1 < new_ball_col) or (new_ball_col < 0):
+            penalty = 1
+            dist_delta = 0 #-self.grid_size/3
+        else: # if ball is out of bounds don't advance ball
+            penalty = 0
+            dist_delta = (abs(ball_row-hole_row) + abs(ball_col-hole_col)) - (abs(new_ball_row-hole_row) + abs(new_ball_col-hole_col))
+            ball_row = new_ball_row
+            ball_col = new_ball_col
+        
+        out = np.asarray([hole_row, hole_col, ball_row, ball_col, strokes+1+penalty, dist_delta])
+        out = out[np.newaxis]
         assert len(out.shape) == 2
         self.state = out
 
@@ -38,22 +62,22 @@ class Catch(object):
         im_size = (self.grid_size,)*2
         state = self.state[0]
         canvas = np.zeros(im_size)
-        canvas[state[0], state[1]] = 1  # draw fruit
-        canvas[-1, state[2]-1:state[2] + 2] = 1  # draw basket
+        #print(state)
+        canvas[state[0], state[1]] = 1  # draw hole
+        canvas[state[2], state[3]] = 1  # draw ball
         return canvas
 
     def _get_reward(self):
-        fruit_row, fruit_col, basket = self.state[0]
-        if fruit_row == self.grid_size-1:
-            if abs(fruit_col - basket) <= 1:
-                return 1
-            else:
-                return -1
-        else:
-            return 0
+        hole_row, hole_col, ball_row, ball_col, strokes, dist_delta = self.state[0]
+        # if dist_delta >= 0:
+        #     return dist_delta
+        # else:
+        #     return dist_delta
+        return dist_delta + ((self.optimalstrokes / strokes) if [hole_row,hole_col] == [ball_row,ball_col] else 0)
 
     def _is_over(self):
-        if self.state[0, 0] == self.grid_size-1:
+        hole_row, hole_col, ball_row, ball_col, strokes, dist_delta = self.state[0]
+        if ((hole_row == ball_row) and (hole_col == ball_col)) or (strokes > 50):
             return True
         else:
             return False
@@ -66,12 +90,14 @@ class Catch(object):
         self._update_state(action)
         reward = self._get_reward()
         game_over = self._is_over()
-        return self.observe(), reward, game_over
+        return self.observe(), reward, game_over, self.state[0, 4]
 
     def reset(self):
-        n = np.random.randint(0, self.grid_size-1, size=1)
-        m = np.random.randint(1, self.grid_size-2, size=1)
-        self.state = np.asarray([0, n, m])[np.newaxis]
+        hole_row = np.random.randint(2, round(self.grid_size/3,0), size=1)
+        hole_col = np.random.randint(3, self.grid_size-4, size=1)
+        self.state = np.asarray([hole_row, hole_col, self.grid_size-2, round(self.grid_size/2,0), 0, 0])[np.newaxis].astype(int)
+        hole_row, hole_col, ball_row, ball_col, strokes, dist_delta = self.state[0]
+        self.optimalstrokes = float(abs(ball_row-hole_row) + abs(ball_col-hole_col))
 
 
 class ExperienceReplay(object):
@@ -113,11 +139,12 @@ class ExperienceReplay(object):
 if __name__ == "__main__":
     # parameters
     epsilon = .1  # exploration
-    num_actions = 3  # [move_left, stay, move_right]
+    clubs = 1
+    num_actions = 4*clubs  # [move_left, stay, move_right]
     epoch = 1000
     max_memory = 500
     hidden_size = 100
-    batch_size = 50
+    batch_size = 30
     grid_size = 10
 
     model = Sequential()
@@ -130,7 +157,7 @@ if __name__ == "__main__":
     # model.load_weights("model.h5")
 
     # Define environment/game
-    env = Catch(grid_size)
+    env = Course(grid_size)
 
     # Initialize experience replay object
     exp_replay = ExperienceReplay(max_memory=max_memory)
@@ -154,8 +181,8 @@ if __name__ == "__main__":
                 action = np.argmax(q[0])
 
             # apply action, get rewards and new state
-            input_t, reward, game_over = env.act(action)
-            if reward == 1:
+            input_t, reward, game_over, strokes = env.act(action)
+            if (strokes <= 50) and (game_over):
                 win_cnt += 1
 
             # store experience
@@ -167,7 +194,7 @@ if __name__ == "__main__":
             newloss = model.train_on_batch(inputs, targets)
 
             loss += newloss
-        print("Epoch {:03d}/999 | Loss {:.4f} | Win count {}".format(e, loss, win_cnt))
+        print("Epoch {:03d}/999 | Loss {:.4f} | Win count {} | Strokes {}".format(e, loss, win_cnt, strokes))
 
     # Save trained model weights and architecture, this will be used by the visualization code
     model.save_weights("model.h5", overwrite=True)
