@@ -63,7 +63,7 @@ class Course(object):
         state = self.state[0]
         canvas = np.zeros(im_size)
         #print(state)
-        canvas[state[0], state[1]] = 1  # draw hole
+        canvas[state[0], state[1]] = -1  # draw hole
         canvas[state[2], state[3]] = 1  # draw ball
         return canvas
 
