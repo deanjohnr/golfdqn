@@ -11,11 +11,11 @@ This is a Keras implementation of a basic reinforcement deep Q learning system. 
 ## Execution - Command Line
 Training - creates model.json and model.h5 for use in testing
 ```
-python train.py -gs 20
+python train.py
 ```
 Testing - plays 18 holes, saves each state as an image in /gifImages, and prints the final score
 ```
-python test.py -gs 20
+python test.py
 ```
 ## Execution - Jupyter Notbook
 PlayNotebook.ipynb provides an easy way to play around with the various game parameters and learning agents. The cells are split into train and test. Test displays the game at the end of the notebook.
