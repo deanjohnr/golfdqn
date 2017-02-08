@@ -1,16 +1,16 @@
 # TRAIN
+import sys, getopt
 import json
 import numpy as np
-from keras.models import Sequential
-from keras.layers.core import Dense, Flatten
-from keras.layers.convolutional import Convolution1D
-from keras.optimizers import sgd
 from random import randint
 
 
 class Course(object):
-    def __init__(self, grid_size=30):
+    def __init__(self, grid_size=20, max_strokes=50, driver_dist=5, driver_error=1):
         self.grid_size = grid_size
+        self.max_strokes = max_strokes
+        self.driver_dist = driver_dist
+        self.driver_error = driver_error
         self.reset()
 
     def _update_state(self, action):
@@ -21,8 +21,8 @@ class Course(object):
         state = self.state
         putter = 1 if action < 4 else 5
         direction = action % 4
-        distance = 1 if action < 4 else 5 + randint(-1,1)
-        offline = 0 if action < 4 else randint(-1,1)
+        distance = 1 if action < 4 else self.driver_dist + randint(-self.driver_error,self.driver_error)
+        offline = 0 if action < 4 else randint(-self.driver_error,self.driver_error)
 
         if direction == 0:  # right
             action_vector = [distance,offline]
@@ -71,7 +71,7 @@ class Course(object):
 
     def _is_over(self):
         hole_row, hole_col, ball_row, ball_col, strokes, dist_delta = self.state[0]
-        if ((hole_row == ball_row) and (hole_col == ball_col)) or (strokes > 50):
+        if ((hole_row == ball_row) and (hole_col == ball_col)) or (strokes > self.max_strokes):
             return True
         else:
             return False
@@ -91,7 +91,6 @@ class Course(object):
         hole_col = np.random.randint(3, self.grid_size-4, size=1)
         self.state = np.asarray([hole_row, hole_col, self.grid_size-2, round(self.grid_size/2,0), 0, 0])[np.newaxis].astype(int)
         hole_row, hole_col, ball_row, ball_col, strokes, dist_delta = self.state[0]
-        self.optimalstrokes = float(abs(ball_row-hole_row) + abs(ball_col-hole_col))
 
 
 class ExperienceReplay(object):
@@ -101,12 +100,11 @@ class ExperienceReplay(object):
         self.discount = discount
 
     def remember(self, states, game_over):
-        # memory[i] = [[state_t, action_t, reward_t, state_t+1], game_over?]
         self.memory.append([states, game_over])
         if len(self.memory) > self.max_memory:
             del self.memory[0]
 
-    def get_batch(self, model, batch_size=10):
+    def get_batch(self, model, batch_size=32):
         len_memory = len(self.memory)
         num_actions = model.output_shape[-1]
         env_dim = self.memory[0][0][0].shape
@@ -127,21 +125,58 @@ class ExperienceReplay(object):
                 targets[i, action_t] = reward_t + self.discount * Q_sa
         return inputs, targets
 
+def main(argv):
+    grid_size = 20
+    learning_rate = 0.1
+    exploration = 0.1
+    epoch = 1000
+    max_memory = 100
+    hidden_size = 0
+    try:
+        opts, args = getopt.getopt(argv,"hg:l:e:n:m:d:",["gridsize=","learn=","explore=","epoch=","memory=","hidden="])
+    except getopt.GetoptError:
+        print 'train.py -g <gridsize> -e <explore> -n <epoch> -m <memory> -d <hidden>'
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt == '-h':
+            print 'train.py -g <gridsize> -l <learn> -e <explore> -n <epoch> -m <memory> -d <hidden>'
+            sys.exit(0)
+        elif opt in ("-g", "--gridsize"):
+            grid_size = int(arg)
+        elif opt in ("-l", "--learn"):
+            learning_rate = float(arg)
+        elif opt in ("-e", "--explore"):
+            exploration = float(arg)
+        elif opt in ("-n", "--epoch"):
+            epoch = int(arg)
+        elif opt in ("-m", "--memory"):
+            max_memory = int(arg)
+        elif opt in ("-d", "--hidden"):
+            hidden_size = int(arg)
+    if grid_size < 20: grid_size = 20
+    if learning_rate > 1: learning_rate = 0.1
+    if exploration > 1 or exploration < 0: exploration = 0.1
+    if epoch < 1: epoch = 500
+    if max_memory < 1: max_memory = 100
+    if hidden_size <= 0: hidden_size = 2*grid_size
+    return grid_size, learning_rate, exploration, epoch, max_memory, hidden_size
 
 if __name__ == "__main__":
     # parameters
-    epsilon = .1  # exploration
-    learning_rate = 0.05
-    clubs = 2
-    num_actions = 4*clubs
-    epoch = 1000
-    max_memory = 100
-    hidden_size = 40
+    num_actions = 8
+    driver_dist = 5
+    driver_error = 1
+    max_strokes = 50
     batch_size = 32
-    grid_size = 20
+    grid_size, learning_rate, exploration, epoch, max_memory, hidden_size = main(sys.argv[1:])
 
-    # Winning Score = 337 -> 832
+    # Now Import Keras
+    from keras.models import Sequential
+    from keras.layers.core import Dense, Flatten
+    from keras.layers.convolutional import Convolution1D
+    from keras.optimizers import sgd
     
+    # Initialize Neural Network Agent
     model = Sequential()
     model.add(Convolution1D(grid_size, 3, input_shape=(grid_size, grid_size), activation='relu'))
     model.add(Flatten())
@@ -153,7 +188,7 @@ if __name__ == "__main__":
     #model.load_weights("model.h5")
 
     # Define environment/game
-    env = Course(grid_size)
+    env = Course(grid_size=grid_size, max_strokes=max_strokes, driver_dist=driver_dist, driver_error=driver_error)
 
     # Initialize experience replay object
     exp_replay = ExperienceReplay(max_memory=max_memory)
@@ -170,7 +205,7 @@ if __name__ == "__main__":
         while not game_over:
             input_tm1 = input_t
             # get next action
-            if np.random.rand() <= epsilon:
+            if np.random.rand() <= exploration:
                 action = np.random.randint(0, num_actions, size=1)
             else:
                 q = model.predict(input_tm1)
@@ -178,7 +213,7 @@ if __name__ == "__main__":
 
             # apply action, get rewards and new state
             input_t, reward, game_over, strokes = env.act(action)
-            if (strokes <= 50) and (game_over):
+            if (strokes <= max_strokes) and (game_over):
                 win_cnt += 1
 
             # store experience
