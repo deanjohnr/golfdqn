@@ -1,14 +1,30 @@
-# TEST # From https://gist.github.com/EderSantana/c7222daa328f0e885093
+# TEST #
+import sys, getopt
 import json
 import matplotlib.pyplot as plt
 import numpy as np
-from keras.models import model_from_json
+from train import Course
 import matplotlib.pylab as pl
-from IPython import display
-import time
 
 # Make sure this grid size matches the value used fro training
-grid_size = 20
+def main(argv):
+    grid_size = 20
+    try:
+        opts, args = getopt.getopt(argv,"hg:",["gridsize="])
+    except getopt.GetoptError:
+        print 'train.py -g <gridsize>'
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt == '-h':
+            print 'train.py -g <gridsize>'
+            sys.exit(0)
+        elif opt in ("-g", "--gridsize"):
+            grid_size = int(arg)
+    return grid_size
+
+grid_size = main(sys.argv[1:])
+
+from keras.models import model_from_json
 
 with open("model.json", "r") as jfile:
     model = model_from_json(json.load(jfile))
@@ -27,8 +43,6 @@ for e in range(18): # 18 holes
     plt.imshow(input_t.reshape((grid_size,)*2),
                interpolation='none', cmap='gray')
     plt.savefig("gifImages/%03d.png" % c)
-    display.display(plt.gcf())
-    display.clear_output(wait=True)
     c += 1
     while not game_over:
         input_tm1 = input_t
@@ -42,8 +56,5 @@ for e in range(18): # 18 holes
 
         plt.imshow(input_t.reshape((grid_size,)*2),
                    interpolation='none', cmap='gray')
-        #plt.savefig("gifImages/%03d.png" % c)
-        display.display(plt.gcf())
-        display.clear_output(wait=True)
-        time.sleep(0.01)
+        plt.savefig("gifImages/%03d.png" % c)
         c += 1
